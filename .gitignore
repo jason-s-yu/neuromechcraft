@@ -1,3 +1,7 @@
+# Project specific
+*.mp4
+logs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

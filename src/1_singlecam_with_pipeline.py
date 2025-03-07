@@ -45,6 +45,7 @@ while not done and frame_count < max_frames:
 
     # take random action; change this to .no_op() if you want the agent to stay still
     action = env.action_space.sample()
+    action['ESC'] = 0
     obs, reward, done, info = env.step(action)
     env.render()
 

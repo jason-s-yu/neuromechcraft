@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from flygym.vision import Retina
 
-out_filename = '1_single_cam_forward_jump.mp4'
+out_filename = '1_single_cam_random_action.mp4'
 
 # Initialize the test environment; reset the state
 env = gym.make('MineRLBasaltFindCave-v0')
@@ -107,10 +107,9 @@ while not done and frame_count < max_frames:
         filename = f"slow/frame_{frame_count}.png"
         cv2.imwrite(filename, combined_frame)
 
-    # take one step jumping forward
-    action = env.action_space.no_op()
-    action['jump'] = 1
-    action['forward'] = 1
+    # take next random action; change this to .no_op() if you want the agent to stay still
+    action = env.action_space.sample()
+    action['inventory'] = 0
     action['ESC'] = 0
     obs, reward, done, info = env.step(action)
     env.render()

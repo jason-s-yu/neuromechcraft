@@ -41,9 +41,9 @@ timestamp_start = time.time()
 while not done and frame_count < max_frames:
     frame_start_time = time.time()
 
-    # Current MineRL frame in BGR (for OpenCV)
+    # parse mineRL frame into BGR for openCV to save to vid
     mc_frame_rgb = obs['pov']  # shape (H, W, 3) in RGB
-    mc_frame_bgr = cv2.cvtColor(mc_frame_rgb, cv2.COLOR_RGB2BGR)
+    mc_frame_bgr = cv2.cvtColor(mc_frame_rgb, cv2.COLOR_RGB2BGR) # reframe to BGR
 
     # Naive approach: single camera duplicated for left and right
     frame = np.ascontiguousarray(obs['pov'])

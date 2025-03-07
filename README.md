@@ -32,6 +32,6 @@ In [src/](src/), you can find some benchmarking scripts.
   - on WSL2 Win 11 Ubuntu 22.04.5 with GPU rendering (RTX 3090) confirmed with `nvidia-smi`, approx 20-45% GPU usage. Elapsed duration about 22-25 seconds.
   - avg frame time is about 30-40 ms == about 28-30 fps
   - video is rendered to a 60 fps timeline
-- `1_singlecam_with_pipeline.py` has the agent move one step forward and jump, before rendering to output
+- `1_singlecam_with_pipeline.py ACTION` has the agent move one step forward and jump, before rendering to output
   - we also pipe the raw rgb data to NMF/flygym and show the fly representation in video
-- `1_singlecam_with_pipeline_random.py` same as the above, but the action is randomized.
+  - `ACTION` defaults to `forward`, but you can pass `random` or `forward` to tell the agent to either do a random action at each turn, or constantly go forward.

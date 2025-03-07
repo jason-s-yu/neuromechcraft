@@ -3,6 +3,7 @@ import minerl as _
 import cv2
 import time
 import numpy as np
+import argparse
 
 import matplotlib
 matplotlib.use('Agg')
@@ -10,6 +11,11 @@ import matplotlib.pyplot as plt
 
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from flygym.vision import Retina
+
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Run MineRL simulation with specified action.')
+parser.add_argument('ACTION', choices=['random', 'forward'], help='Action to perform in the simulation (either random actions or going forward)', default='forward')
+args = parser.parse_args()
 
 out_filename = '1_single_cam_forward_jump.mp4'
 
@@ -107,11 +113,14 @@ while not done and frame_count < max_frames:
         filename = f"slow/frame_{frame_count}.png"
         cv2.imwrite(filename, combined_frame)
 
-    # take one step jumping forward
+    # take one step based on the specified action
     action = env.action_space.no_op()
-    action['jump'] = 1
-    action['forward'] = 1
-    action['ESC'] = 0
+    if args.ACTION == 'forward':
+        action['jump'] = 1
+        action['forward'] = 1
+    elif args.ACTION == 'random':
+        action = env.action_space.sample()
+        action['inventory'] = 0
     obs, reward, done, info = env.step(action)
     env.render()
 

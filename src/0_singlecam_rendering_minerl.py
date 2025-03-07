@@ -1,3 +1,13 @@
+"""
+This script demonstrates initializing a single MineRL environment.
+It will capture observation frames from the agent and convert raw RGB data to a video file.
+
+We do not pipe any MineRL outputs from here into the Flygym pipeline.
+
+Output:
+- A video file named '0_output.mp4' containing the captured frames.
+"""
+
 import gym
 import minerl as _
 import cv2
@@ -23,9 +33,6 @@ max_frames = 600
 frame_count = 0
 done = False
 
-# Init NMF retina
-retina = Retina()
-
 print('Running simulation...')
 
 timestamp_start = time.time()
@@ -39,14 +46,6 @@ while not done and frame_count < max_frames:
 
     # Write frame to video
     video_writer.write(frame_bgr)
-
-    # def some_fly_decision_model(fly_vision): ...
-    # frame = np.ascontiguousarray(obs['pov']) # also import numpy as np
-    # fly_vision_left = retina.raw_image_to_hex_pxls(frame)
-    # fly_vision_right = retina.raw_image_to_hex_pxls(frame)
-    # fly_vision = np.stack([fly_vision_left, fly_vision_right], axis=0)
-    # decision = some_fly_decision_model(fly_vision)
-    # action = convert_decision_to_minecraft_action(decision)
 
     # Sit still
     action = env.action_space.no_op()

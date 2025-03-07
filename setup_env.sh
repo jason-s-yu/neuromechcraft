@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-# Check if pyenv is installed
+# check if pyenv is installed
 if ! command -v pyenv &> /dev/null
 then
   echo "pyenv not found. Please install pyenv."
@@ -8,7 +8,7 @@ else
   echo "pyenv is already installed"
 fi
 
-# Check if pyenv-virtualenv is installed
+# check if pyenv-virtualenv is installed
 if ! pyenv commands | grep -q 'virtualenv'
 then
   echo "pyenv-virtualenv not found. Please install pyenv-virtualenv."

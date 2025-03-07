@@ -2,6 +2,18 @@
 
 > MineRL x NeuroMechFly
 
+## Requirements / Env Setup
+
+- Python 3.11.11
+- Java JDK 8: tested on 8.0.442-tem
+  - suggest installing and using [sdkman](https://sdkman.io/install/)
+
+A basic setup script is provided in [setup_env.sh](setup_env.sh). It relies on `pyenv` and `pyenv-virtualenv` and creates a virtual env for this project, and installs the required dependencies.
+
+If you have `sdkman` installed, it will recognize the correct sdk version from `.sdkmanrc`. You may need to `sdk install java 8.0.442-tem`.
+
+NB: I couldn't find `8.0.442-tem` on Mac `sdkman`, so any equivalent redistribution on version 8 will work (corretto, etc.)
+
 ## NeuroMechFly (NMF)
 
 [NeuroMechFly (NMF) v2](https://neuromechfly.org/) is a fruit fly model which incorporates a compound eye vision system within a fly-mimicing brain control loop. Eyes are simulated by two cameras covering about 270 degrees FoV combined, with an overlap of about 17 [degrees](https://neuromechfly.org/tutorials/vision_basics.html#retina-simulation).

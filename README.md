@@ -4,6 +4,10 @@
 
 ## Requirements / Env Setup
 
+I have tested on two versions of MineRL: v1.0 and v0.4.4.
+
+### MineRL 1.0
+
 - Python 3.11.11
 - Java JDK 8: tested on 8.0.442-tem
   - suggest installing and using [sdkman](https://sdkman.io/install/)
@@ -13,6 +17,41 @@ A basic setup script is provided in [setup_env.sh](setup_env.sh). It relies on `
 If you have `sdkman` installed, it will recognize the correct sdk version from `.sdkmanrc`. You may need to `sdk install java 8.0.442-tem`.
 
 NB: I couldn't find `8.0.442-tem` on Mac `sdkman`, so any equivalent redistribution on version 8 will work (corretto, etc.)
+
+### MineRL 0.4.4
+
+- (suggested) create a separate virtual env
+- Requires Python 3.10.16 (python 10) in order to support gym 0.19
+  - Python 3.11 has a newer version of `setuptools` which is incompatible with the 0.19 installation
+  - EDIT: actualy 3.11 might work, but I tested with 3.10. Feel free to use a later version and see if it works
+- `pip install pip install setuptools==65.5.0 pip==21`; `pip install wheel==0.38.0` [Reference](https://stackoverflow.com/a/77205046)
+- `pip install matplotlib numpy flygym`
+
+Then, you will need to modify the MineRL repository. [Reference](https://github.com/minerllabs/minerl/issues/744).
+
+1. Clone this repository
+2. Clone `git clone git@github.com:minerllabs/minerl.git`
+3. Checkout v0.4.4 `git checkout v0.4.4`
+4. Modify `minerl/Malmo/Minecraft/build.gradle`:
+   1. Add the lines to the `buildscript`
+
+      ```gradle
+      maven {
+          url 'file:path/to/neuromechcraft/MixinGradle-dcfaf61'
+      }
+      ```
+
+   2. Adjust the `classpath` under `buildscript`
+
+      ```gradle
+      classpath('MixinGradle-dcfaf61:MixinGradle:dcfaf61'){ // 0.6
+            // Because forgegradle requires 6.0 (not -debug-all) while mixingradle depends on 5.0
+            // and putting mixin right here will place it before forge in the class loader
+            exclude group: 'org.ow2.asm', module: 'asm-debug-all'
+        }
+      ```
+
+5. `pip install path/to/minerl_repository`
 
 ## NeuroMechFly (NMF)
 

@@ -25,4 +25,4 @@ pyenv activate neuromechcraft
 
 python -m pip install --upgrade pip
 
-pip install git+https://github.com/minerllabs/minerl
+pip install git+https://github.com/minerllabs/minerl matplotlib numpy flygym

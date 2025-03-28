@@ -4,22 +4,27 @@ import cv2
 import time
 import numpy as np
 import argparse
+import os
+import shutil
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-from matplotlib.backends.backend_agg import FigureCanvasAgg
+from flygym import Fly
 from flygym.vision import Retina
 
-# Parse command line arguments
+# arg parser
 parser = argparse.ArgumentParser(description='Run MineRL simulation with specified action.')
-parser.add_argument('ACTION', choices=['random', 'forward'], default='forward', help='Action to perform in the simulation (either random actions or going forward)')
+parser.add_argument('ACTION', choices=['random', 'forward'], default='forward', nargs='?',
+                    help='Action to perform in the simulation (either random actions or going forward)')
 args = parser.parse_args()
 
 out_filename = '1_single_cam_forward_jump.mp4'
 
-# Initialize the test environment; reset the state
+# rm slow dir
+if os.path.exists('slow'):
+    print('Removing old slow frames...')
+    shutil.rmtree('slow')
+os.makedirs('slow', exist_ok=True)
+
+# MineRL initialization
 env = gym.make('MineRLBasaltFindCave-v0')
 obs = env.reset()
 
@@ -27,106 +32,121 @@ obs = env.reset()
 height, width, channels = obs['pov'].shape  # (64, 64, 3)
 print(f'Verify obs dims: {height}x{width}x{channels}')
 
-# Set up recorder params
+# videowriter config
 fps = 15.0
 max_frames = 600
 frame_count = 0
 done = False
 
-# Init NMF retina
-retina = Retina()
+fly = Fly(enable_vision=True)
+retina = fly.retina
 
+print(f'Retina initialized with: ncols: {retina.ncols}, nrows: {retina.nrows}')
+
+# using 'mp4v' to avoid FMP4 fallback warning
+fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 video_writer = None
-fourcc = cv2.VideoWriter_fourcc(*'FMP4')
 
 avg_frametime = 0.0
 
-print('Running simulation...')
+print("=" * 70)
+print(f'Running simulation with ACTION = {args.ACTION} for {max_frames} frames')
+print("=" * 70)
 timestamp_start = time.time()
 
 while not done and frame_count < max_frames:
     frame_start_time = time.time()
 
-    # parse mineRL frame into BGR for openCV to save to vid
-    mc_frame_rgb = obs['pov']  # shape (H, W, 3) in RGB
-    mc_frame_bgr = cv2.cvtColor(mc_frame_rgb, cv2.COLOR_RGB2BGR) # reframe to BGR
+    # convert Minecraft frame to BGR for OpenCV
+    mc_frame_rgb = obs['pov']  # shape is (H, W, 3) in RGB
+    mc_frame_bgr = cv2.cvtColor(mc_frame_rgb, cv2.COLOR_RGB2BGR) # for openCV display
 
-    # Naive approach: single camera duplicated for left and right
-    frame = np.ascontiguousarray(obs['pov'])
-    fly_vision_left = retina.hex_pxls_to_human_readable(
-        retina.raw_image_to_hex_pxls(frame), color_8bit=True
-    ).max(axis=-1)
-    fly_vision_right = retina.hex_pxls_to_human_readable(
-        retina.raw_image_to_hex_pxls(frame), color_8bit=True
-    ).max(axis=-1)
+    # compute fly vision (grayscale) and convert to BGR
+    frame_conv_start = time.time()
+    hex_pxls = retina.raw_image_to_hex_pxls(cv2.resize(mc_frame_rgb, (retina.ncols, retina.nrows)))
 
-    # Show fly representation
-    fig, axs = plt.subplots(1, 2, figsize=(6, 3), tight_layout=True)
-    axs[0].imshow(fly_vision_left, cmap="gray", vmin=0, vmax=255)
-    axs[0].axis("off")
-    axs[0].set_title("Left eye")
-    axs[1].imshow(fly_vision_right, cmap="gray", vmin=0, vmax=255)
-    axs[1].axis("off")
-    axs[1].set_title("Right eye")
+    fly_vision_rgb = retina.hex_pxls_to_human_readable(
+        hex_pxls,
+        color_8bit=True
+    )
 
-    # Render the figure to an off-screen buffer (RGBA)
-    canvas = FigureCanvasAgg(fig)
-    canvas.draw()
+    print('hex_pixels shape:', hex_pxls.shape) # should be (721, 2)
+    print("fly_vision_rgb shape:", fly_vision_rgb.shape) # should be (512, 450, 2)
+
+    fly_vision_gray = fly_vision_rgb.max(axis=-1)
+
+    frame_conv_end = time.time()
+    frame_conv_total = frame_conv_end - frame_conv_start
+
+    fly_vision_bgr = cv2.cvtColor(fly_vision_gray, cv2.COLOR_GRAY2BGR)
+
+    # ensure same height for side-by-side. 
+    # if their heights differ, consider resizing one or both to match.
+    # e.g. if fly_vision_bgr is not 64 px tall, adjust here:
+    # fly_vision_bgr = cv2.resize(fly_vision_bgr, (width, height), interpolation=cv2.INTER_NEAREST)
+
+    # combine side-by-side
+    if (fly_vision_bgr.shape[0] != height) or (fly_vision_bgr.shape[1] != width):
+        fly_vision_bgr = cv2.resize(
+            fly_vision_bgr,
+            (width, height),  # Match Minecraft's (64,64)
+            interpolation=cv2.INTER_NEAREST
+        )
     
-    # Grab the RGBA buffer from the Agg canvas
-    plot_image = np.array(canvas.buffer_rgba())  # shape: (plot_height, plot_width, 4)
-    plt.close(fig)
+    combined_bgr = np.hstack((mc_frame_bgr, fly_vision_bgr))
 
-    # Convert RGBA -> BGR for OpenCV
-    plot_image_bgr = cv2.cvtColor(plot_image, cv2.COLOR_RGBA2BGR)
+    # upscale for visibility
+    upscale_factor = 4
+    combined_bgr_up = cv2.resize(combined_bgr, None, 
+                                 fx=upscale_factor, 
+                                 fy=upscale_factor, 
+                                 interpolation=cv2.INTER_NEAREST)
 
-    plot_height, plot_width, _ = plot_image_bgr.shape
-
-    # resize plot for prettiness
-    if plot_width != width:
-        scale = width / float(plot_width)
-        new_height = int(plot_height * scale)
-        plot_image_bgr = cv2.resize(plot_image_bgr, (width, new_height))
-    else:
-        new_height = plot_height
-
-    # stack Minecraft on top of matplotlib fig
-    combined_frame = cv2.vconcat([mc_frame_bgr, plot_image_bgr])
-
-    # init videowriter if not yet based on shape
+    # initialize the video writer on first frame (once we know final size)
+    video_writer_start = time.time()
     if video_writer is None:
-        final_height = height + new_height
-        video_writer = cv2.VideoWriter(out_filename, fourcc, fps, (width, final_height))
-        print(f'Video writer initialized for size ({width}, {final_height})')
+        final_height, final_width = combined_bgr_up.shape[:2]
+        video_writer = cv2.VideoWriter(out_filename, fourcc, fps, (final_width, final_height))
+        print(f'Video writer initialized with size ({final_width}, {final_height})')
+        tmp_end_time = time.time()
 
-    video_writer.write(combined_frame)
+    # write current frame
+    video_writer.write(combined_bgr_up)
+    video_writer_end = time.time()
+    video_writer_time = video_writer_end - video_writer_start
 
+    # update timing
     frame_end_time = time.time()
-    frame_time_sec = (frame_end_time - frame_start_time)
-    print(f'Frame {frame_count+1} time: {frame_time_sec*1000:.3f} ms')
+    frame_time_sec = frame_end_time - frame_start_time
+    print(f'Frame {(frame_count+1):3d} time: {frame_time_sec*1000:.3f} ms [flygym pipeline time: {(frame_conv_total)*1000:.3f} ms, frame write time: {(video_writer_time)*1000:.3f} ms]')
 
+    # store slow frames
+    if frame_time_sec > 0.150:
+        slow_frame_name = f"slow/frame_{frame_count+1}.png"
+        cv2.imwrite(slow_frame_name, combined_bgr_up)
+
+    # update stats
     avg_frametime = (avg_frametime * frame_count + frame_time_sec) / (frame_count + 1)
     frame_count += 1
 
-    # store slow frames for later review
-    if frame_time_sec > 0.150:
-        filename = f"slow/frame_{frame_count}.png"
-        cv2.imwrite(filename, combined_frame)
-
-    # take one step based on the specified action
-    action = env.action_space.no_op()
+    action = env.action_space.noop()
     if args.ACTION == 'forward':
         action['jump'] = 1
         action['forward'] = 1
     elif args.ACTION == 'random':
         action = env.action_space.sample()
+        # zero out inventory usage
         action['inventory'] = 0
+
     obs, reward, done, info = env.step(action)
-    env.render()
+
+print('=' * 50)
+print('Simulation finished. Attempting to finalize files.')
+print('=' * 50)
 
 timestamp_end = time.time()
 
-if video_writer:
+if video_writer is not None:
     video_writer.release()
 env.close()
 

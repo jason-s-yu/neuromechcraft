@@ -25,7 +25,7 @@ NB: I couldn't find `8.0.442-tem` on Mac `sdkman`, so any equivalent redistribut
   - Python 3.11 has a newer version of `setuptools` which is incompatible with the 0.19 installation
   - EDIT: actualy 3.11 might work, but I tested with 3.10. Feel free to use a later version and see if it works
 - `pip install pip install setuptools==65.5.0 pip==21`; `pip install wheel==0.38.0` [Reference](https://stackoverflow.com/a/77205046)
-- `pip install matplotlib numpy flygym`
+- `pip install matplotlib numpy flygym pyglet`
 
 Then, you will need to modify the MineRL repository. [Reference](https://github.com/minerllabs/minerl/issues/744).
 

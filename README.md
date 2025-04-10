@@ -20,6 +20,8 @@ NB: I couldn't find `8.0.442-tem` on Mac `sdkman`, so any equivalent redistribut
 
 ### MineRL 0.4.4
 
+- Java JDK 8: tested on 8.0.442-tem
+  - suggest installing and using [sdkman](https://sdkman.io/install/)
 - (suggested) create a separate virtual env
 - Requires Python 3.10.16 (python 10) in order to support gym 0.19
   - Python 3.11 has a newer version of `setuptools` which is incompatible with the 0.19 installation

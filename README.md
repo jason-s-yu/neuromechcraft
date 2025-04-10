@@ -6,6 +6,10 @@
 
 I have tested on two versions of MineRL: v1.0 and v0.4.4.
 
+- Java JDK 8: tested on 8.0.442-tem
+  - suggest installing and using [sdkman](https://sdkman.io/install/)
+- Note that JDK is different from Java SE. Type `java -version` to ensure you are not on SE.
+
 ### MineRL 1.0
 
 - Python 3.11.11

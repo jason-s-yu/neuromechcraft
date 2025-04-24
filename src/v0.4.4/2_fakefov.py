@@ -19,7 +19,7 @@ class TqdmLoggingHandler(logging.Handler):
         try:
             msg = self.format(record)
             tqdm.write(msg, end=self.terminator)
-            self.flush()
+            self.flush() # Not strictly necessary for tqdm but good practice
         except Exception:
             self.handleError(record)
 
@@ -56,10 +56,12 @@ NMF_BINOCULAR_OVERLAP_DEG = 17.0
 
 # Visualization config
 DISPLAY_SCALE_FACTOR = 4 # Upscale the final output window
-ENABLE_HEX_VISUALIZATION = True # Set to False to disable retina vis
+ENABLE_HEX_VISUALIZATION = True # Set to False to disable retina viz
 HEX_GRID_RADIUS = 3 # Controls size of hexagons in visualization
 HEX_GRID_COLS = 12 # Approximate number of columns for simulated retina hex grid
 HEX_GRID_ROWS = 10 # Approximate number of rows
+# Adjusted spacing between grids to give labels more room
+BOTTOM_GRID_SPACING = 60 # Horizontal space between left and right grid
 
 # Obstacle avoidance / decision config
 BRIGHTNESS_THRESHOLD = 50 # Avg pixel value below which area is considered 'dark' (0-255)
@@ -100,6 +102,7 @@ logger.info(f"Calculated Captures Needed: {num_captures}")
 logger.info(f"Yaw Turn Per Capture Step: {yaw_per_capture_step:.2f} deg")
 logger.info(f"Initial Centering Yaw: {initial_yaw_turn:.2f} deg")
 logger.info(f"Hex Grid Dimensions: {HEX_GRID_ROWS} rows x {HEX_GRID_COLS} cols")
+logger.info(f"Bottom Grid Spacing: {BOTTOM_GRID_SPACING} px")
 logger.info(f"Video Saving Enabled: {SAVE_VIDEO}")
 if SAVE_VIDEO:
     logger.info(f"Output Filename: {OUTPUT_FILENAME}")
@@ -114,17 +117,29 @@ def turn_agent(env, yaw_degrees):
     obs = None
     done = False
     try:
+        # Use the current observation if available, otherwise use the last known one
+        current_obs = getattr(env, 'current_obs', None)
+        if current_obs is None:
+             logger.warning("turn_agent called without a valid env.current_obs.")
+             # Optionally, perform a no-op step to try and get an observation
+             # obs, _, done, _ = env.step(env.action_space.noop())
+             # if obs is not None: env.current_obs = obs
+             # else: return None, True # Failed to get obs
+             return None, True # Cannot proceed without an observation state
+
         obs, _, done, _ = env.step(action)
+
         if obs is not None:
             env.current_obs = obs # Update shared observation state
         else:
             logger.warning("turn_agent received None observation from env.step. Episode might have ended.")
             # Keep previous obs if current is None, let done flag handle termination
             done = True # Assume done if observation is None after an action
-        return obs, done
+        return env.current_obs, done # Return the potentially updated current_obs
     except Exception as e:
         logger.error(f"Error during env.step() in turn_agent: {e}", exc_info=True)
-        return env.current_obs, True # Assume done if error occurs
+        return getattr(env, 'current_obs', None), True # Return last known obs, assume done
+
 
 def simulate_wide_fov_mineRL(env, num_captures, yaw_per_step, initial_turn):
     """
@@ -176,7 +191,7 @@ def simulate_wide_fov_mineRL(env, num_captures, yaw_per_step, initial_turn):
             logger.warning(f"Got None or empty POV at capture {i+1}. Skipping frame.")
             # Attempt to continue turning to maintain sequence? Or break? Let's skip frame.
         else:
-            frames.append(current_pov)
+            frames.append(current_pov.copy()) # Append a copy
             logger.debug(f"Captured frame {i+1}/{num_captures}")
 
         # Turn for the next capture, unless this was the last one
@@ -206,7 +221,7 @@ def simulate_wide_fov_mineRL(env, num_captures, yaw_per_step, initial_turn):
         # Attempt to return the *last known good* single POV if available
         if hasattr(env, 'current_obs') and env.current_obs and 'pov' in env.current_obs and env.current_obs['pov'] is not None:
             logger.warning("Returning last valid single POV image instead of wide FOV.")
-            stitched_image_rgb = env.current_obs['pov']
+            stitched_image_rgb = env.current_obs['pov'].copy()
         else:
             logger.error("No frames captured and no current POV available.")
             # done should already be true if we reached here without frames/obs
@@ -302,34 +317,25 @@ def draw_simulated_retina(canvas, center_x, center_y, grid_rows, grid_cols, hex_
         logger.error("Cannot draw retina on None or empty canvas.")
         return
 
-    # Calculate bounding box width/height for centering calculations
-    grid_bounding_width = 0
-    grid_bounding_height = 0
-    if grid_cols > 0 and grid_rows > 0 and hex_radius > 0:
-        grid_bounding_width = hex_width * 0.75 * (grid_cols -1) + hex_width
-        grid_bounding_height = hex_height * grid_rows + (hex_height / 2 if grid_cols > 1 else 0) # Accounts for staggering
-        grid_bounding_width = max(1, int(round(grid_bounding_width)))
-        grid_bounding_height = max(1, int(round(grid_bounding_height)))
-    else:
-        logger.error("Cannot calculate grid bounding box: invalid dimensions/radius.")
-        return # Cannot proceed without bounding box
-
-
-    # Calculate the origin (top-left corner) of the *entire grid area* relative to the provided canvas center
-    grid_origin_x = center_x - grid_bounding_width / 2.0
-    grid_origin_y = center_y - grid_bounding_height / 2.0
+    # Calculate approximate bounding box for centering calculation within this function
+    grid_bounding_width = hex_width * 0.75 * (grid_cols - 1) + hex_width if grid_cols > 0 else 0
+    grid_bounding_height = hex_height * (grid_rows + 0.5) if grid_cols > 1 else hex_height # Accounts for staggering only if needed
 
     for row in range(grid_rows):
         for col in range(grid_cols):
-            # Calculate individual hexagon position relative to the grid origin
+            # Calculate position based on grid layout (staggered columns)
             offset_x = hex_width * 0.75 * col
             offset_y = hex_height * row
             if col % 2 != 0: # Odd columns are shifted down
                 offset_y += hex_height / 2
 
-            # Calculate absolute center of this hexagon on the canvas
-            hex_center_x = grid_origin_x + offset_x + hex_width / 2.0 # Add half width to get to hex center from offset
-            hex_center_y = grid_origin_y + offset_y + hex_height / 2.0 # Add half height
+            # Calculate absolute center of this hexagon
+            # Top-left corner of the bounding box for the grid area relative to the provided center_x, center_y:
+            grid_origin_x = center_x - grid_bounding_width / 2
+            grid_origin_y = center_y - grid_bounding_height / 2
+
+            hex_center_x = grid_origin_x + offset_x + hex_width / 2 # Add half width to get to hex center from offset
+            hex_center_y = grid_origin_y + offset_y + hex_height / 2 # Add half height
 
             vertices = get_hexagon_vertices(hex_center_x, hex_center_y, hex_radius)
 
@@ -345,8 +351,8 @@ def draw_simulated_retina(canvas, center_x, center_y, grid_rows, grid_cols, hex_
                 cv2.polylines(canvas, [vertices], isClosed=True, color=(50, 50, 50), thickness=1) # Dark gray border
                 cv2.fillConvexPoly(canvas, vertices, color=hex_color)
             except Exception as e:
-                 # Catch potential errors if vertices are somehow invalid (e.g., off-canvas)
-                 logger.warning(f"Error drawing hexagon at grid ({row}, {col}), canvas pos ({hex_center_x:.1f}, {hex_center_y:.1f}): {e}")
+                # Catch potential errors if vertices are somehow invalid (e.g., off-canvas)
+                logger.warning(f"Error drawing hexagon at grid ({row}, {col}), canvas pos ({hex_center_x:.1f}, {hex_center_y:.1f}): {e}")
 
             val_idx += 1
             # Safety break if somehow val_idx exceeds expected, though list length check handles this mostly
@@ -379,34 +385,34 @@ def simulate_nmf_retina_output(stitched_image, num_hex_rows, num_hex_cols, binoc
     overlap_pixels = min(w, max(0, overlap_pixels))
 
     # Calculate the width of each eye's FOV in pixels, ensuring it's valid
+    # Symmetrically: Eye FOV = (Total Width + Overlap) / 2
     eye_fov_pixels = (w + overlap_pixels) / 2.0
     eye_fov_pixels = min(w, max(0, eye_fov_pixels)) # Clamp between 0 and full width
 
     # Calculate pixel indices for slicing
+    # Left eye goes from pixel 0 to eye_fov_pixels
     left_eye_end_px = int(round(eye_fov_pixels))
+    # Right eye goes from (w - eye_fov_pixels) to w
     right_eye_start_px = int(round(w - eye_fov_pixels))
 
     # Clamp indices to be within image bounds [0, w] for slicing
     left_eye_end_px = min(w, max(0, left_eye_end_px))
     right_eye_start_px = min(w, max(0, right_eye_start_px))
 
-    # Handle edge case where calculations might lead to start >= end or minimal region
+    # Handle edge case where calculations might lead to start >= end
     if right_eye_start_px >= w: right_eye_start_px = max(0, w - 1)
     if left_eye_end_px <= 0 : left_eye_end_px = min(1, w) # Ensure at least 1 pixel if possible
     if right_eye_start_px >= left_eye_end_px and w > 0: # Check for non-sensical overlap/slicing
-        logger.warning(f"Calculated eye regions have invalid overlap: LeftEnd={left_eye_end_px}, RightStart={right_eye_start_px}. Attempting split adjustment.")
-        # Attempt a sensible default: split near middle with some overlap centered
-        mid_point = w / 2.0
-        half_overlap = overlap_pixels / 2.0
-        left_eye_end_px = int(round(mid_point + half_overlap))
-        right_eye_start_px = int(round(mid_point - half_overlap))
-        # Re-clamp after adjustment
+        logger.warning(f"Calculated eye regions have invalid overlap: LeftEnd={left_eye_end_px}, RightStart={right_eye_start_px}. Adjusting.")
+        # Attempt a sensible default: split in middle with overlap centered
+        mid_point = w // 2
+        left_eye_end_px = mid_point + overlap_pixels // 2
+        right_eye_start_px = mid_point - overlap_pixels // 2
         left_eye_end_px = min(w, max(0, left_eye_end_px))
         right_eye_start_px = min(w, max(0, right_eye_start_px))
-        # Ensure start < end after adjustment
+        # Ensure start is still less than end after adjustment
         if right_eye_start_px >= left_eye_end_px:
-             right_eye_start_px = max(0, left_eye_end_px - 1) # Force at least one pixel gap/overlap if possible
-
+             right_eye_start_px = max(0, left_eye_end_px -1) # Force at least 1 pixel overlap if possible
         logger.warning(f"Adjusted eye regions: LeftEnd={left_eye_end_px}, RightStart={right_eye_start_px}.")
 
 
@@ -446,17 +452,17 @@ def simulate_nmf_retina_output(stitched_image, num_hex_rows, num_hex_cols, binoc
         row_step = h_reg / max(1, num_rows)
         col_step = w_reg / max(1, num_cols)
 
-        # Avoid steps being zero if region dim is 1
-        if row_step <= 0: row_step = 1.0
-        if col_step <= 0: col_step = 1.0
+        # Avoid steps being zero if region dim is 1 or less
+        if row_step <= 1e-6 : row_step = h_reg # Treat as single row if height too small
+        if col_step <= 1e-6 : col_step = w_reg # Treat as single col if width too small
 
         for r in range(num_rows):
             for c in range(num_cols):
-                # Calculate start/end indices, using floor/ceil might be safer than round for coverage
-                y_start = int(math.floor(r * row_step))
-                y_end = int(math.ceil((r + 1) * row_step))
-                x_start = int(math.floor(c * col_step))
-                x_end = int(math.ceil((c + 1) * col_step))
+                # Calculate start/end indices, rounding needed
+                y_start = int(round(r * row_step))
+                y_end = int(round((r + 1) * row_step))
+                x_start = int(round(c * col_step))
+                x_end = int(round((c + 1) * col_step))
 
                 # Clamp indices to be within region bounds [0, H/W]
                 y_start = min(h_reg, max(0, y_start))
@@ -464,39 +470,44 @@ def simulate_nmf_retina_output(stitched_image, num_hex_rows, num_hex_cols, binoc
                 x_start = min(w_reg, max(0, x_start))
                 x_end = min(w_reg, max(0, x_end))
 
-                # Ensure start < end for slicing, handle 1-pixel dimensions or collapsed regions
+                # Ensure start < end for slicing, handle 1-pixel or zero-dim slices
                 if y_start >= y_end:
-                    y_end = y_start + 1 # Ensure at least 1 pixel height if collapsed
+                     if y_start > 0: y_start = y_end - 1
+                     else: y_end = y_start + 1
+                     y_start = max(0, y_start) # Re-clamp
+                     y_end = min(h_reg, y_end)
+
                 if x_start >= x_end:
-                    x_end = x_start + 1 # Ensure at least 1 pixel width if collapsed
+                     if x_start > 0: x_start = x_end - 1
+                     else: x_end = x_start + 1
+                     x_start = max(0, x_start)
+                     x_end = min(w_reg, x_end)
 
-                # Re-clamp after potential adjustment
-                y_end = min(h_reg, y_end)
-                x_end = min(w_reg, x_end)
-
-                # Extract patch, ensure slice is valid
+                # Extract patch only if slice dimensions are valid
                 if y_start < y_end and x_start < x_end:
-                    patch = region[y_start:y_end, x_start:x_end]
+                     patch = region[y_start:y_end, x_start:x_end]
+                     if patch.size > 0:
+                         avg_brightness = np.mean(patch)
+                         # Handle potential NaN/Inf
+                         if not np.isfinite(avg_brightness):
+                             logger.warning(f"NaN/Inf brightness in patch [{y_start}:{y_end}, {x_start}:{x_end}], using 0.0")
+                             avg_brightness = 0.0
+                         brightness_values.append(float(avg_brightness))
+                     else:
+                         # Slice was valid but patch is empty (should be rare)
+                         logger.warning(f"Empty patch despite valid slice at R:{r}, C:{c} (Slice [{y_start}:{y_end}, {x_start}:{x_end}]) in region {h_reg}x{w_reg}. Appending 0.0")
+                         brightness_values.append(0.0)
                 else:
-                    patch = None # Slice became invalid
+                     # Slice dimensions were invalid after clamping/adjustment
+                     logger.warning(f"Invalid slice dimensions at R:{r}, C:{c} (Slice [{y_start}:{y_end}, {x_start}:{x_end}]) in region {h_reg}x{w_reg}. Appending 0.0")
+                     brightness_values.append(0.0)
 
-                if patch is not None and patch.size > 0:
-                    avg_brightness = np.mean(patch)
-                    # Handle potential NaN/Inf from weird patches
-                    if not np.isfinite(avg_brightness):
-                        logger.warning(f"NaN/Inf brightness in patch [{y_start}:{y_end}, {x_start}:{x_end}], using 0.0")
-                        avg_brightness = 0.0
-                    brightness_values.append(float(avg_brightness))
-                else:
-                    # Log if patch is empty (should be less common with floor/ceil and adjustments)
-                    logger.warning(f"Empty or invalid patch at R:{r}, C:{c} (Slice [{y_start}:{y_end}, {x_start}:{x_end}]) in region {h_reg}x{w_reg}. Appending 0.0")
-                    brightness_values.append(0.0)
 
         # Pad if fewer values were generated than expected (safety net)
         if len(brightness_values) != num_target_hexes:
-             logger.warning(f"Padding retina values (got {len(brightness_values)}, expected {num_target_hexes})")
-             while len(brightness_values) < num_target_hexes:
-                 brightness_values.append(0.0)
+            logger.warning(f"Padding retina values (got {len(brightness_values)}, expected {num_target_hexes})")
+            while len(brightness_values) < num_target_hexes:
+                brightness_values.append(0.0)
 
         return brightness_values[:num_target_hexes] # Ensure correct length
 
@@ -511,137 +522,169 @@ def create_visualizations(stitched_pov, left_retina_values, right_retina_values,
     placeholder_width = 320 # Estimate reasonable width for placeholder if needed
     if stitched_pov is None or stitched_pov.ndim != 3 or stitched_pov.shape[0] <= 0 or stitched_pov.shape[1] <= 0:
         logger.warning("create_visualizations received invalid stitched_pov. Creating placeholder.")
-        # Use RGB format consistent with normal operation
-        stitched_pov = np.zeros((64, placeholder_width, 3), dtype=np.uint8) + 50 # Gray placeholder (RGB)
+        # Make placeholder height similar to expected MineRL height for better visualization
+        placeholder_height = 64
+        stitched_pov = np.zeros((placeholder_height, placeholder_width, 3), dtype=np.uint8) + 50 # Gray placeholder
 
     h_stitched, w_stitched, _ = stitched_pov.shape
     top_view = stitched_pov # Top part is the (potentially placeholder) stitched POV
 
-    # Bottom canvas preparation
-    bottom_canvas = None
-    bottom_height = 0
-    final_width = w_stitched # Start assuming final width is the stitched POV width
-
+    # Bottom canvas
     if ENABLE_HEX_VISUALIZATION:
         hex_radius = hex_config['radius']
         grid_rows = hex_config['rows']
         grid_cols = hex_config['cols']
+        bottom_spacing = hex_config['spacing'] # Get spacing from config
 
         # Calculate the dimensions needed to draw *one* hex grid
-        grid_disp_width = 0
-        grid_disp_height = 0
         if grid_cols > 0 and grid_rows > 0 and hex_radius > 0:
             hex_width = hex_radius * 2
             hex_height = math.sqrt(3) * hex_radius
-            grid_disp_width = int(round(hex_width * 0.75 * (grid_cols - 1) + hex_width))
-            grid_disp_height = int(round(hex_height * grid_rows + (hex_height / 2 if grid_cols > 1 else 0))) # Add stagger offset only if multiple cols
+            # Approx width: 0.75 width per col except last one + full last width
+            grid_disp_width = int(round(hex_width * 0.75 * (grid_cols - 1) + hex_width)) if grid_cols > 1 else int(round(hex_width))
+            # Approx height: accounts for row height + half height for staggering
+            grid_disp_height = int(round(hex_height * grid_rows + (hex_height / 2 if grid_cols > 1 else 0))) if grid_rows > 0 else 0
             grid_disp_width = max(1, grid_disp_width) # Ensure at least 1 pixel
             grid_disp_height = max(1, grid_disp_height)
         else:
-             logger.warning("Hex grid dimensions/radius invalid, cannot calculate display size.")
-             grid_disp_width = 100 # Default size if config is bad
-             grid_disp_height = 100
+            logger.warning("Hex grid dimensions/radius invalid, cannot calculate display size.")
+            grid_disp_width = 100 # Default size if config is bad
+            grid_disp_height = 100
 
-        # Define padding and spacing for the bottom area
-        bottom_padding = 20 # Padding around hex grids (top/bottom/left/right)
-        bottom_spacing = 40 # Horizontal space between left and right grid
+        # Define padding for the bottom area
+        bottom_padding = 20 # Min padding around hex grids (top/bottom/left/right)
 
-        # Calculate the minimum width needed for the two grids, spacing, and padding
-        required_grid_canvas_width = (grid_disp_width * 2) + bottom_spacing + (bottom_padding * 2)
+        # Calculate the width needed for the two grids area (including space between them)
+        total_grid_area_width = (grid_disp_width * 2) + bottom_spacing
 
-        # Determine the final width needed for the combined image
-        final_width = max(w_stitched, required_grid_canvas_width)
+        # Bottom canvas width must accommodate grids+padding OR match top view width, whichever is larger
+        required_grid_canvas_width = total_grid_area_width + (bottom_padding * 2) # Min width needed for grids+padding
+        bottom_width = max(w_stitched, required_grid_canvas_width)
 
-        # Calculate bottom canvas height
-        bottom_height = grid_disp_height + bottom_padding * 2
+        # Bottom canvas height needs grid height plus top/bottom padding
+        # Add extra space for labels at the top
+        label_area_height = 20 # Approximate height needed for labels
+        bottom_height = grid_disp_height + bottom_padding * 2 + label_area_height
+
+        # Create the black background canvas for the bottom part
+        bottom_canvas = np.zeros((bottom_height, bottom_width, 3), dtype=np.uint8)
+
+        # Calculate drawing centers for the grids to ensure they fit and are centered
+        # Center Y, accounting for label area height
+        grid_draw_center_y = label_area_height + bottom_padding + grid_disp_height / 2.0
+
+        # Calculate margins to center the total grid area within the bottom_width
+        leftover_space = bottom_width - total_grid_area_width
+        side_margin = max(bottom_padding, leftover_space / 2.0) # Ensure at least min padding
+
+        # Calculate grid centers based on the margins
+        left_grid_draw_center_x = side_margin + grid_disp_width / 2.0
+        right_grid_draw_center_x = bottom_width - side_margin - grid_disp_width / 2.0
+
+        # Ensure centers are floats for precision
+        left_grid_draw_center_x = float(left_grid_draw_center_x)
+        right_grid_draw_center_x = float(right_grid_draw_center_x)
+        grid_draw_center_y = float(grid_draw_center_y)
+
+        # Draw the grids
+        draw_simulated_retina(bottom_canvas, left_grid_draw_center_x, grid_draw_center_y, grid_rows, grid_cols, hex_radius, left_retina_values)
+        draw_simulated_retina(bottom_canvas, right_grid_draw_center_x, grid_draw_center_y, grid_rows, grid_cols, hex_radius, right_retina_values)
+
+        # Center labels
+        left_text = "Left Retina (Sim)"
+        right_text = "Right Retina (Sim)"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.4
+        font_thickness = 1
+        text_color = (200, 200, 200)
+        text_y_pos = bottom_padding # Place text baseline at the top padding line
+
+        # Calculate text sizes
+        (left_text_width, left_text_height), _ = cv2.getTextSize(left_text, font, font_scale, font_thickness)
+        (right_text_width, right_text_height), _ = cv2.getTextSize(right_text, font, font_scale, font_thickness)
+
+        # Calculate centered X positions for text
+        left_text_x = int(round(left_grid_draw_center_x - left_text_width / 2.0))
+        right_text_x = int(round(right_grid_draw_center_x - right_text_width / 2.0))
+
+        # Ensure text starts within canvas bounds
+        left_text_x = max(0, left_text_x)
+        right_text_x = max(0, right_text_x)
+        text_y_pos = max(left_text_height + 5, text_y_pos) # Ensure Y is below top edge
+
+        # Draw centered text
+        cv2.putText(bottom_canvas, left_text, (left_text_x, text_y_pos), font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+        cv2.putText(bottom_canvas, right_text, (right_text_x, text_y_pos), font, font_scale, text_color, font_thickness, cv2.LINE_AA)
 
     else:
-        # If hex vis disabled, minimal placeholder bar
+        # If hex vis disabled, create a small placeholder bar at the bottom
         bottom_height = 20
-        final_width = w_stitched # Match top view width
+        bottom_width = w_stitched # Match top view width
+        bottom_canvas = np.zeros((bottom_height, bottom_width, 3), dtype=np.uint8)
+        cv2.putText(bottom_canvas, "Retina Viz Disabled", (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
 
-    # Resize top to fit
-    top_view_resized = top_view
-    if w_stitched != final_width:
-        logger.debug(f"Resizing top view width from {w_stitched} to {final_width} to match bottom requirements.")
+    # Stitch top and bottom
+    # Resize top view (stitched POV) to match the final width of the bottom canvas if needed
+    # Use INTER_NEAREST for pixelated look, avoid blur on upscale/downscale
+    if bottom_width != w_stitched:
+        logger.debug(f"Resizing top view from {w_stitched} to {bottom_width} width.")
         # Calculate new height maintaining aspect ratio
-        new_h_top = int(round(h_stitched * final_width / w_stitched))
+        new_h_top = int(round(h_stitched * bottom_width / w_stitched)) if w_stitched > 0 else h_stitched
         new_h_top = max(1, new_h_top) # Ensure height is at least 1
         try:
-            top_view_resized = cv2.resize(top_view, (final_width, new_h_top), interpolation=cv2.INTER_NEAREST)
+            # Ensure target width is also positive
+            target_w_top = max(1, bottom_width)
+            top_view_resized = cv2.resize(top_view, (target_w_top, new_h_top), interpolation=cv2.INTER_NEAREST)
         except cv2.error as e:
             logger.error(f"Error resizing top view: {e}. Using original.")
             top_view_resized = top_view # Fallback
-            final_width = top_view_resized.shape[1] # Reset final_width if resize failed
-            logger.warning(f"Adjusted final_width back to {final_width} due to top view resize error.")
-    # Get final dimensions of the (potentially resized) top view
-    h_top_final, w_top_final, _ = top_view_resized.shape
+            # If fallback, sizes won't match - resize bottom canvas *back* to match top
+            bottom_width = top_view_resized.shape[1]
+            try:
+                 bottom_canvas = cv2.resize(bottom_canvas, (bottom_width, bottom_height), interpolation=cv2.INTER_NEAREST)
+                 logger.warning(f"Adjusted bottom canvas width back to {bottom_width} due to top view resize error.")
+            except cv2.error as e_bottom:
+                 logger.error(f"Error resizing bottom canvas during fallback: {e_bottom}. Visualization may be misaligned.")
+                 # If bottom resize fails too, we might have differently sized images to stack.
+                 # Safest fallback: create empty final canvas? Or use just top view?
+                 final_canvas = top_view_resized # Default to top view only if bottom resize fails
+                 logger.error("Using only top view for visualization due to resize errors.")
 
-    # Render bottom canvas
-    # Ensure bottom canvas width *exactly* matches the final top view width
-    bottom_canvas = np.zeros((bottom_height, w_top_final, 3), dtype=np.uint8) # Use w_top_final
-
-    if ENABLE_HEX_VISUALIZATION:
-        # Recalculate drawing centers based on the *actual* bottom_canvas dimensions (w_top_final, bottom_height)
-        # Center Y is simply the middle of the bottom canvas height
-        grid_draw_center_y = bottom_height / 2.0
-
-        # Calculate available horizontal space for drawing grids within padding
-        available_draw_width = w_top_final - 2 * bottom_padding
-        if available_draw_width < (grid_disp_width * 2 + bottom_spacing):
-             logger.warning(f"Canvas width ({w_top_final}) might not be enough for grids ({grid_disp_width}x2), spacing ({bottom_spacing}), and padding ({bottom_padding}x2). Grids might overlap or touch padding.")
-             # Adjust spacing to fit if needed? Or let it overlap? For now, proceed with calculated centers.
-             # Alternative: scale down grids if too wide? Complex.
-
-        # Center X for left grid: place it so its left edge is at `bottom_padding`
-        left_grid_draw_center_x = bottom_padding + grid_disp_width / 2.0
-        # Center X for right grid: place it so its right edge is at `w_top_final - bottom_padding`
-        right_grid_draw_center_x = w_top_final - bottom_padding - grid_disp_width / 2.0
-
-        # Draw the grids and labels using the final calculated centers
-        draw_simulated_retina(bottom_canvas, left_grid_draw_center_x, grid_draw_center_y, grid_rows, grid_cols, hex_radius, left_retina_values)
-        # Position text relative to the calculated grid origin
-        left_text_x = int(round(left_grid_draw_center_x - grid_disp_width / 2.0))
-        left_text_x = max(0, left_text_x) # Ensure text doesn't start off-screen left
-        cv2.putText(bottom_canvas, "Left Retina (Sim)",
-                    (left_text_x, bottom_padding - 5), # Text position slightly above grid origin
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1, cv2.LINE_AA)
-
-        draw_simulated_retina(bottom_canvas, right_grid_draw_center_x, grid_draw_center_y, grid_rows, grid_cols, hex_radius, right_retina_values)
-        # Position text relative to the calculated grid origin
-        right_text_x = int(round(right_grid_draw_center_x - grid_disp_width / 2.0))
-        right_text_x = max(0, right_text_x) # Ensure text doesn't start off-screen left
-        cv2.putText(bottom_canvas, "Right Retina (Sim)",
-                    (right_text_x, bottom_padding - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1, cv2.LINE_AA)
 
     else:
-        # Draw placeholder text if hex vis disabled
-        cv2.putText(bottom_canvas, "Retina vis Disabled", (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
+        top_view_resized = top_view # No resize needed
+
+    # Check if final_canvas was already assigned due to error
+    if 'final_canvas' not in locals():
+        h_top_resized, w_top_resized, _ = top_view_resized.shape
+        h_bottom, w_bottom, _ = bottom_canvas.shape
+
+        # Ensure widths match before stacking, padding if necessary
+        if w_top_resized != w_bottom:
+            logger.warning(f"Width mismatch before vstack: top={w_top_resized}, bottom={w_bottom}. Adjusting bottom.")
+            # Resize bottom to match top as a final attempt
+            try:
+                 bottom_canvas = cv2.resize(bottom_canvas, (w_top_resized, h_bottom), interpolation=cv2.INTER_NEAREST)
+                 w_bottom = bottom_canvas.shape[1] # update width
+            except cv2.error as e_final_resize:
+                 logger.error(f"Final resize attempt for bottom canvas failed: {e_final_resize}. Stacking may fail.")
+                 # If resizing fails, cannot stack. Use top view only.
+                 final_canvas = top_view_resized
+                 logger.error("Using only top view for visualization due to final resize error.")
 
 
-    # Stitch top and bottom canvases
-    final_canvas = None
-    try:
-        # Verify widths one last time before stacking
-        if top_view_resized.shape[1] != bottom_canvas.shape[1]:
-             logger.error(f"Width mismatch before vstack! Top: {top_view_resized.shape[1]}, Bottom: {bottom_canvas.shape[1]}. Attempting resize fallback.")
-             # Attempt to resize bottom to match top as a last resort
-             bottom_canvas = cv2.resize(bottom_canvas, (top_view_resized.shape[1], bottom_canvas.shape[0]), interpolation=cv2.INTER_NEAREST)
+        # Create the final canvas by stacking vertically if widths match (and not already assigned)
+        if 'final_canvas' not in locals() and w_top_resized == w_bottom:
+             final_canvas = np.vstack((top_view_resized, bottom_canvas))
+        elif 'final_canvas' not in locals():
+             # Should not happen if resize fallback worked, but as safety:
+             logger.error("Cannot vstack images of different widths. Returning only top view.")
+             final_canvas = top_view_resized
 
-        final_canvas = np.vstack((top_view_resized, bottom_canvas))
-    except Exception as e:
-        logger.error(f"Error during vstack: {e}. Top shape: {top_view_resized.shape}, Bottom shape: {bottom_canvas.shape}", exc_info=True)
-        # Fallback: return just the resized top view if stacking fails
-        final_canvas = top_view_resized
 
-    if final_canvas is None:
-        logger.error("Final canvas is None after stacking attempt.")
-        return None # Cannot proceed
-
-    # Scale
-    final_canvas_scaled = final_canvas # Default to unscaled
-    final_h, final_w, _ = final_canvas.shape
+    # Scale final output for easier display
+    final_canvas_scaled = None
+    final_h, final_w = final_canvas.shape[:2] # Get dimensions from the actual final canvas
 
     if final_w > 0 and final_h > 0 and scale_factor != 1.0 and scale_factor > 0:
         target_w = int(round(final_w * scale_factor))
@@ -653,8 +696,8 @@ def create_visualizations(stitched_pov, left_retina_values, right_retina_values,
         except cv2.error as e:
             logger.error(f"Error scaling final canvas: {e}. Returning unscaled.")
             final_canvas_scaled = final_canvas # Fallback to unscaled
-    elif scale_factor <= 0:
-         logger.warning(f"Invalid scale_factor ({scale_factor}), returning unscaled image.")
+    else:
+        final_canvas_scaled = final_canvas # No scaling needed or invalid scale factor
 
     return final_canvas_scaled
 
@@ -694,7 +737,7 @@ def get_obstacle_avoidance_action(env, left_vals, right_vals, threshold, turn_ma
         # Both sides dark: Obstacle likely straight ahead. Turn consistently (e.g., right)
         logger.debug("Avoidance: Both sides dark, turning right.")
         turn = turn_magnitude # Turn right
-        move_forward = True # Still try to move forward while turning (or maybe stop?)
+        move_forward = True # Still try to move forward while turning (can be adjusted)
     elif left_dark:
         # Left is dark, turn right (positive yaw)
         logger.debug("Avoidance: Left side dark, turning right.")
@@ -712,6 +755,7 @@ def get_obstacle_avoidance_action(env, left_vals, right_vals, threshold, turn_ma
         move_forward = True
 
     # Populate the action dictionary based on decisions and global flags
+    # Only activate movement if decided above AND corresponding global flag is True
     action['forward'] = 1 if move_forward and ALWAYS_MOVE_FORWARD else 0
     action['jump'] = 1 if move_forward and ALWAYS_JUMP else 0 # Only jump if moving forward
     action['sprint'] = 1 if move_forward and ALWAYS_SPRINT else 0 # Only sprint if moving forward
@@ -758,8 +802,14 @@ if __name__ == "__main__":
         if env: env.close()
         exit(1)
 
-    # Config for hex grid visualization
-    hex_config = {'rows': HEX_GRID_ROWS, 'cols': HEX_GRID_COLS, 'radius': HEX_GRID_RADIUS}
+    # Config for hex grid visualization passed to the function
+    hex_config = {
+        'rows': HEX_GRID_ROWS,
+        'cols': HEX_GRID_COLS,
+        'radius': HEX_GRID_RADIUS,
+        'spacing': BOTTOM_GRID_SPACING # Include spacing here
+    }
+
 
     # Create display window
     cv2.namedWindow("NMF Agent View (Minecraft)", cv2.WINDOW_NORMAL) # Allow resizing
@@ -782,23 +832,52 @@ if __name__ == "__main__":
                 )
                 done = done or fov_done # Update done flag if FOV simulation ended episode
 
-                # Prepare data for visualization even if done, to show final frame
-                left_retina_brightness = []
-                right_retina_brightness = []
-                if stitched_pov is not None:
-                    # Call NMF sim
-                    left_retina_brightness, right_retina_brightness = simulate_nmf_retina_output(
-                        stitched_pov, HEX_GRID_ROWS, HEX_GRID_COLS, NMF_BINOCULAR_OVERLAP_DEG, TARGET_FOV
-                    )
-                else:
-                    # Use default values if POV is None (e.g., if fov_done is True)
-                    logger.warning("Stitched POV is None, using default brightness for visualization.")
-                    num_hexes = HEX_GRID_ROWS * HEX_GRID_COLS
-                    left_retina_brightness = [0.0] * num_hexes
-                    right_retina_brightness = [0.0] * num_hexes
+                # Attempt final visualization even if episode ended during FOV sim
+                final_visualization_attempted = False
+                if done and not final_visualization_attempted:
+                     logger.info(f"Episode ended during FOV simulation/reset at step {step_counter+1}. Attempting final viz.")
+                     final_visualization_attempted = True # Prevent multiple attempts if already done
+                     if stitched_pov is not None:
+                          try:
+                              left_b, right_b = simulate_nmf_retina_output(stitched_pov, HEX_GRID_ROWS, HEX_GRID_COLS, NMF_BINOCULAR_OVERLAP_DEG, TARGET_FOV)
+                              display_img = create_visualizations(stitched_pov, left_b, right_b, DISPLAY_SCALE_FACTOR, hex_config)
+                              if display_img is not None and display_img.shape[0] > 0 and display_img.shape[1] > 0:
+                                  display_img_bgr = cv2.cvtColor(display_img, cv2.COLOR_RGB2BGR)
+                                  cv2.imshow("NMF Agent View (Minecraft)", display_img_bgr)
+                                  if SAVE_VIDEO and video_writer is not None and video_writer.isOpened():
+                                      logger.debug("Writing final frame to video after episode end.")
+                                      video_writer.write(display_img_bgr)
+                                  cv2.waitKey(50) # Short delay
+                          except Exception as viz_err:
+                              logger.error(f"Error during final visualization after episode end: {viz_err}")
+                     pbar.update(1) # Update progress bar for this step
+                     continue # Skip rest of loop, will break on next iteration's 'if done'
 
 
-                # Create visualization frame (using potentially None POV or default retina values)
+                # Check if FOV simulation failed to produce an image
+                if stitched_pov is None:
+                    logger.warning("Failed to get valid POV for this step. Agent performing no-op.")
+                    action = env.action_space.noop()
+                    try:
+                        if not done: # Don't step if already done
+                            obs, _, step_done, _ = env.step(action)
+                            done = done or step_done
+                            if obs is not None: env.current_obs = obs
+                            else:
+                                logger.error("No-op step returned None observation after failed FOV.")
+                                done = True
+                    except Exception as e:
+                        logger.error(f"Error during no-op step after failed POV: {e}", exc_info=True)
+                        done = True
+                    pbar.update(1) # Count this as a step
+                    continue # Skip to next step
+
+                # Call NMF sim
+                left_retina_brightness, right_retina_brightness = simulate_nmf_retina_output(
+                    stitched_pov, HEX_GRID_ROWS, HEX_GRID_COLS, NMF_BINOCULAR_OVERLAP_DEG, TARGET_FOV
+                )
+
+                # Create visualization frame
                 display_image = create_visualizations(
                     stitched_pov, left_retina_brightness, right_retina_brightness, DISPLAY_SCALE_FACTOR, hex_config
                 )
@@ -820,6 +899,7 @@ if __name__ == "__main__":
                             else:
                                 logger.error(f"Could not open video writer for {OUTPUT_FILENAME}.")
                                 video_writer = None # Ensure it stays None if failed
+                                SAVE_VIDEO = False # Disable saving if cannot open
                         except Exception as e:
                             logger.error(f"Error initializing video writer: {e}", exc_info=True)
                             video_writer = None
@@ -827,52 +907,34 @@ if __name__ == "__main__":
 
                     # Write frame if writer is ready
                     if SAVE_VIDEO and video_writer is not None and video_writer.isOpened():
-                        try:
-                           video_writer.write(display_image_bgr)
-                        except Exception as e:
-                            logger.error(f"Error writing frame {step_counter+1} to video: {e}", exc_info=True)
-                            # Continue running, but log the error
+                        video_writer.write(display_image_bgr)
 
                 else:
                     logger.warning("create_visualizations returned invalid image. Cannot display or write.")
 
-
-                # Action selection and env step
-                # If episode ended during FOV sim/vis, skip action/step
-                if done:
-                    logger.info(f"Episode ended at step {step_counter+1} (likely during FOV sim/reset). Skipping action/step.")
-                    pbar.update(1)
-                    cv2.waitKey(1) # Allow window update
-                    continue # Go to next loop iteration (will break immediately)
-
-                # If stitched_pov was None earlier, we need to decide action (e.g., no-op)
-                if stitched_pov is None:
-                    logger.warning("Failed to get valid POV for this step. Agent performing no-op action.")
-                    combined_action = env.action_space.noop()
-                else:
-                    # Get action based on retina input
-                    combined_action = get_obstacle_avoidance_action(
-                        env, left_retina_brightness, right_retina_brightness, BRIGHTNESS_THRESHOLD, TURN_MAGNITUDE
-                    )
+                # Get action based on retina input
+                combined_action = get_obstacle_avoidance_action(
+                    env, left_retina_brightness, right_retina_brightness, BRIGHTNESS_THRESHOLD, TURN_MAGNITUDE
+                )
                 logger.debug(f"Calculated Action: {combined_action}")
 
                 # Run action
                 try:
-                    obs, reward, step_done, info = env.step(combined_action)
-                    done = step_done # Update done status based on this step
-                    if obs is not None:
-                        env.current_obs = obs # Update observation
-                    else:
-                        logger.warning("env.step() returned None observation after combined action.")
-                        done = True # Treat as episode end
+                    if not done: # Only step if the episode isn't already marked as done
+                        obs, reward, step_done, info = env.step(combined_action)
+                        done = step_done # Update done status based on this step
+                        if obs is not None:
+                            env.current_obs = obs # Update observation
+                        else:
+                            logger.warning("env.step() returned None observation after combined action.")
+                            done = True # Treat as episode end
 
-                    # Log reward if desired
-                    if reward != 0: logger.debug(f"Step {step_counter+1}: Reward = {reward}")
+                        # Log reward if desired
+                        if reward != 0: logger.debug(f"Step {step_counter+1}: Reward = {reward}")
 
                 except Exception as e:
                     logger.error(f"Error during main agent env.step(): {e}", exc_info=True)
                     done = True # Assume episode ends on error
-
 
                 # Loop cleanup
                 step_end_time = time.time()

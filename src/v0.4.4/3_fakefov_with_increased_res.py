@@ -42,7 +42,7 @@ logger.addHandler(tqdm_handler)
 # Prevent propagation to avoid potential double logging if root logger is configured
 logger.propagate = False
 
-# CONFIG FLAGS
+# -------------- CONFIG FLAGS -------------- #
 USE_CONCATENATION_ALWAYS = True # Set True to skip stitching attempt, faster and avoids warnings on low-res
 
 # Target total horizontal FOV (degrees) for the NMF simulation
@@ -53,6 +53,8 @@ SINGLE_CAPTURE_HFOV = 70.0
 STITCH_OVERLAP = 20.0
 # NMF specific: Approximate overlap between the final left/right eye views
 NMF_BINOCULAR_OVERLAP_DEG = 17.0
+
+MAX_STEPS = 1000 # Limit the number of agent steps
 
 # Visualization config
 DISPLAY_SCALE_FACTOR = 4 # Upscale the final output window
@@ -775,7 +777,6 @@ if __name__ == "__main__":
     env = None
     video_writer = None
     done = False
-    max_steps = 1000 # Limit the number of agent steps
 
     try:
         logger.info("Creating MineRL environment (MineRLNavigateDense-v0)...")
@@ -817,8 +818,8 @@ if __name__ == "__main__":
 
     try:
         # Use tqdm context manager for progress bar linked to logging
-        with tqdm(total=max_steps, desc="Agent Steps", unit="step", leave=True) as pbar:
-            for step_counter in range(max_steps):
+        with tqdm(total=MAX_STEPS, desc="Agent Steps", unit="step", leave=True) as pbar:
+            for step_counter in range(MAX_STEPS):
                 if done:
                     logger.info(f"Episode finished, breaking loop at step {step_counter}.")
                     break # Exit the main loop
@@ -951,8 +952,8 @@ if __name__ == "__main__":
                 # Add other keybinds if needed, e.g., pause
 
             # Log if loop finished due to max_steps rather than 'done' flag
-            if step_counter == max_steps - 1 and not done :
-                logger.info(f"Reached maximum steps ({max_steps}) without episode finishing.")
+            if step_counter == MAX_STEPS - 1 and not done :
+                logger.info(f"Reached maximum steps ({MAX_STEPS}) without episode finishing.")
 
     except KeyboardInterrupt:
         logger.info("Keyboard Interrupt detected, shutting down.")

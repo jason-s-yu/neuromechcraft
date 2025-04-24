@@ -57,9 +57,9 @@ NMF_BINOCULAR_OVERLAP_DEG = 17.0
 # Visualization config
 DISPLAY_SCALE_FACTOR = 4 # Upscale the final output window
 ENABLE_HEX_VISUALIZATION = True # Set to False to disable retina viz
-HEX_GRID_RADIUS = 3 # Controls size of hexagons in visualization
-HEX_GRID_COLS = 12 # Approximate number of columns for simulated retina hex grid
-HEX_GRID_ROWS = 10 # Approximate number of rows
+HEX_GRID_RADIUS = 2 # Controls size of hexagons in visualization (Reduced for higher density)
+HEX_GRID_COLS = 26 # Approximate number of columns for simulated retina hex grid (Increased towards biological count)
+HEX_GRID_ROWS = 26 # Approximate number of rows (Increased towards biological count) -> 26x26 = 676 ommatidia
 # Adjusted spacing between grids to give labels more room
 BOTTOM_GRID_SPACING = 60 # Horizontal space between left and right grid
 
@@ -72,7 +72,7 @@ ALWAYS_JUMP = True # Note: Jump might need specific timing in MineRL
 
 # Video output config
 SAVE_VIDEO = True # Set to True to save the output visualization
-OUTPUT_FILENAME = "2_fakefov.mp4" # Default output video filename
+OUTPUT_FILENAME = "3_fakefov_676ommatidia.mp4" # Default output video filename
 OUTPUT_FPS = 10.0 # Target FPS for the output video (actual runtime FPS will vary)
 
 # Calculate parameters
@@ -101,7 +101,8 @@ logger.info(f"NMF Binocular Overlap: {NMF_BINOCULAR_OVERLAP_DEG} deg")
 logger.info(f"Calculated Captures Needed: {num_captures}")
 logger.info(f"Yaw Turn Per Capture Step: {yaw_per_capture_step:.2f} deg")
 logger.info(f"Initial Centering Yaw: {initial_yaw_turn:.2f} deg")
-logger.info(f"Hex Grid Dimensions: {HEX_GRID_ROWS} rows x {HEX_GRID_COLS} cols")
+logger.info(f"Hex Grid Dimensions: {HEX_GRID_ROWS} rows x {HEX_GRID_COLS} cols = {HEX_GRID_ROWS * HEX_GRID_COLS} ommatidia/eye")
+logger.info(f"Hex Grid Radius: {HEX_GRID_RADIUS} px")
 logger.info(f"Bottom Grid Spacing: {BOTTOM_GRID_SPACING} px")
 logger.info(f"Video Saving Enabled: {SAVE_VIDEO}")
 if SAVE_VIDEO:
@@ -318,8 +319,12 @@ def draw_simulated_retina(canvas, center_x, center_y, grid_rows, grid_cols, hex_
         return
 
     # Calculate approximate bounding box for centering calculation within this function
-    grid_bounding_width = hex_width * 0.75 * (grid_cols - 1) + hex_width if grid_cols > 0 else 0
-    grid_bounding_height = hex_height * (grid_rows + 0.5) if grid_cols > 1 else hex_height # Accounts for staggering only if needed
+    # Approx width: 0.75 width per col except last one + full last width
+    grid_bounding_width = hex_width * 0.75 * (grid_cols - 1) + hex_width if grid_cols > 1 else hex_width
+    # Approx height: accounts for row height + half height for staggering
+    grid_bounding_height = hex_height * grid_rows + (hex_height / 2 if grid_cols > 1 and grid_rows > 0 else 0) if grid_rows > 0 else 0
+    grid_bounding_width = max(1.0, grid_bounding_width) # Ensure > 0
+    grid_bounding_height = max(1.0, grid_bounding_height) # Ensure > 0
 
     for row in range(grid_rows):
         for col in range(grid_cols):
@@ -331,13 +336,18 @@ def draw_simulated_retina(canvas, center_x, center_y, grid_rows, grid_cols, hex_
 
             # Calculate absolute center of this hexagon
             # Top-left corner of the bounding box for the grid area relative to the provided center_x, center_y:
-            grid_origin_x = center_x - grid_bounding_width / 2
-            grid_origin_y = center_y - grid_bounding_height / 2
+            grid_origin_x = center_x - grid_bounding_width / 2.0
+            grid_origin_y = center_y - grid_bounding_height / 2.0
 
-            hex_center_x = grid_origin_x + offset_x + hex_width / 2 # Add half width to get to hex center from offset
-            hex_center_y = grid_origin_y + offset_y + hex_height / 2 # Add half height
+            hex_center_x = grid_origin_x + offset_x + hex_width / 2.0 # Add half width to get to hex center from offset
+            hex_center_y = grid_origin_y + offset_y + hex_height / 2.0 # Add half height
 
             vertices = get_hexagon_vertices(hex_center_x, hex_center_y, hex_radius)
+
+            # Safety check for brightness_values index
+            if val_idx >= len(brightness_values):
+                logger.warning(f"Brightness value index {val_idx} out of bounds for length {len(brightness_values)}. Stopping draw.")
+                break
 
             brightness = brightness_values[val_idx]
             # Ensure brightness is a valid number for color conversion
@@ -355,9 +365,7 @@ def draw_simulated_retina(canvas, center_x, center_y, grid_rows, grid_cols, hex_
                 logger.warning(f"Error drawing hexagon at grid ({row}, {col}), canvas pos ({hex_center_x:.1f}, {hex_center_y:.1f}): {e}")
 
             val_idx += 1
-            # Safety break if somehow val_idx exceeds expected, though list length check handles this mostly
-            if val_idx >= total_hexes: break
-        if val_idx >= total_hexes: break
+        if val_idx >= total_hexes: break # Break outer loop too
 
 
 def simulate_nmf_retina_output(stitched_image, num_hex_rows, num_hex_cols, binocular_overlap_deg, total_fov_deg):
@@ -485,22 +493,22 @@ def simulate_nmf_retina_output(stitched_image, num_hex_rows, num_hex_cols, binoc
 
                 # Extract patch only if slice dimensions are valid
                 if y_start < y_end and x_start < x_end:
-                     patch = region[y_start:y_end, x_start:x_end]
-                     if patch.size > 0:
-                         avg_brightness = np.mean(patch)
-                         # Handle potential NaN/Inf
-                         if not np.isfinite(avg_brightness):
-                             logger.warning(f"NaN/Inf brightness in patch [{y_start}:{y_end}, {x_start}:{x_end}], using 0.0")
-                             avg_brightness = 0.0
-                         brightness_values.append(float(avg_brightness))
-                     else:
-                         # Slice was valid but patch is empty (should be rare)
-                         logger.warning(f"Empty patch despite valid slice at R:{r}, C:{c} (Slice [{y_start}:{y_end}, {x_start}:{x_end}]) in region {h_reg}x{w_reg}. Appending 0.0")
-                         brightness_values.append(0.0)
+                    patch = region[y_start:y_end, x_start:x_end]
+                    if patch.size > 0:
+                        avg_brightness = np.mean(patch)
+                        # Handle potential NaN/Inf
+                        if not np.isfinite(avg_brightness):
+                            logger.warning(f"NaN/Inf brightness in patch [{y_start}:{y_end}, {x_start}:{x_end}], using 0.0")
+                            avg_brightness = 0.0
+                        brightness_values.append(float(avg_brightness))
+                    else:
+                        # Slice was valid but patch is empty (should be rare)
+                        logger.warning(f"Empty patch despite valid slice at R:{r}, C:{c} (Slice [{y_start}:{y_end}, {x_start}:{x_end}]) in region {h_reg}x{w_reg}. Appending 0.0")
+                        brightness_values.append(0.0)
                 else:
-                     # Slice dimensions were invalid after clamping/adjustment
-                     logger.warning(f"Invalid slice dimensions at R:{r}, C:{c} (Slice [{y_start}:{y_end}, {x_start}:{x_end}]) in region {h_reg}x{w_reg}. Appending 0.0")
-                     brightness_values.append(0.0)
+                    # Slice dimensions were invalid after clamping/adjustment
+                    logger.warning(f"Invalid slice dimensions at R:{r}, C:{c} (Slice [{y_start}:{y_end}, {x_start}:{x_end}]) in region {h_reg}x{w_reg}. Appending 0.0")
+                    brightness_values.append(0.0)
 
 
         # Pad if fewer values were generated than expected (safety net)
@@ -518,18 +526,20 @@ def simulate_nmf_retina_output(stitched_image, num_hex_rows, num_hex_cols, binoc
 
 
 def create_visualizations(stitched_pov, left_retina_values, right_retina_values, scale_factor, hex_config):
-    """ Creates the combined visualization with stitched view and hex grids. """
+    """ Creates the combined visualization with stitched view and hex grids, ensuring proportional scaling. """
     placeholder_width = 320 # Estimate reasonable width for placeholder if needed
     if stitched_pov is None or stitched_pov.ndim != 3 or stitched_pov.shape[0] <= 0 or stitched_pov.shape[1] <= 0:
         logger.warning("create_visualizations received invalid stitched_pov. Creating placeholder.")
-        # Make placeholder height similar to expected MineRL height for better visualization
         placeholder_height = 64
         stitched_pov = np.zeros((placeholder_height, placeholder_width, 3), dtype=np.uint8) + 50 # Gray placeholder
 
-    h_stitched, w_stitched, _ = stitched_pov.shape
+    h_top_native, w_top_native, _ = stitched_pov.shape
     top_view = stitched_pov # Top part is the (potentially placeholder) stitched POV
 
     # Bottom canvas
+    bottom_canvas_native = None
+    h_bottom_native, w_bottom_native = 0, 0
+
     if ENABLE_HEX_VISUALIZATION:
         hex_radius = hex_config['radius']
         grid_rows = hex_config['rows']
@@ -543,7 +553,7 @@ def create_visualizations(stitched_pov, left_retina_values, right_retina_values,
             # Approx width: 0.75 width per col except last one + full last width
             grid_disp_width = int(round(hex_width * 0.75 * (grid_cols - 1) + hex_width)) if grid_cols > 1 else int(round(hex_width))
             # Approx height: accounts for row height + half height for staggering
-            grid_disp_height = int(round(hex_height * grid_rows + (hex_height / 2 if grid_cols > 1 else 0))) if grid_rows > 0 else 0
+            grid_disp_height = int(round(hex_height * grid_rows + (hex_height / 2.0 if grid_cols > 1 else 0))) if grid_rows > 0 else 0
             grid_disp_width = max(1, grid_disp_width) # Ensure at least 1 pixel
             grid_disp_height = max(1, grid_disp_height)
         else:
@@ -551,46 +561,33 @@ def create_visualizations(stitched_pov, left_retina_values, right_retina_values,
             grid_disp_width = 100 # Default size if config is bad
             grid_disp_height = 100
 
-        # Define padding for the bottom area
+        # Define padding and label area for the bottom section
         bottom_padding = 20 # Min padding around hex grids (top/bottom/left/right)
-
-        # Calculate the width needed for the two grids area (including space between them)
-        total_grid_area_width = (grid_disp_width * 2) + bottom_spacing
-
-        # Bottom canvas width must accommodate grids+padding OR match top view width, whichever is larger
-        required_grid_canvas_width = total_grid_area_width + (bottom_padding * 2) # Min width needed for grids+padding
-        bottom_width = max(w_stitched, required_grid_canvas_width)
-
-        # Bottom canvas height needs grid height plus top/bottom padding
-        # Add extra space for labels at the top
         label_area_height = 20 # Approximate height needed for labels
-        bottom_height = grid_disp_height + bottom_padding * 2 + label_area_height
 
-        # Create the black background canvas for the bottom part
-        bottom_canvas = np.zeros((bottom_height, bottom_width, 3), dtype=np.uint8)
+        # Calculate the total native width needed for the two grids area (including space between them and padding)
+        total_grid_area_width = (grid_disp_width * 2) + bottom_spacing
+        w_bottom_native = total_grid_area_width + (bottom_padding * 2)
 
-        # Calculate drawing centers for the grids to ensure they fit and are centered
+        # Calculate native height needed for the bottom canvas
+        h_bottom_native = grid_disp_height + bottom_padding * 2 + label_area_height
+
+        # Create the black background canvas for the bottom part at native size
+        bottom_canvas_native = np.zeros((h_bottom_native, w_bottom_native, 3), dtype=np.uint8)
+
+        # Calculate drawing centers for the grids within the native bottom canvas
         # Center Y, accounting for label area height
         grid_draw_center_y = label_area_height + bottom_padding + grid_disp_height / 2.0
 
-        # Calculate margins to center the total grid area within the bottom_width
-        leftover_space = bottom_width - total_grid_area_width
-        side_margin = max(bottom_padding, leftover_space / 2.0) # Ensure at least min padding
+        # Calculate grid centers X based on padding and spacing
+        left_grid_draw_center_x = bottom_padding + grid_disp_width / 2.0
+        right_grid_draw_center_x = w_bottom_native - bottom_padding - grid_disp_width / 2.0
 
-        # Calculate grid centers based on the margins
-        left_grid_draw_center_x = side_margin + grid_disp_width / 2.0
-        right_grid_draw_center_x = bottom_width - side_margin - grid_disp_width / 2.0
+        # Draw the grids onto the native bottom canvas
+        draw_simulated_retina(bottom_canvas_native, float(left_grid_draw_center_x), float(grid_draw_center_y), grid_rows, grid_cols, hex_radius, left_retina_values)
+        draw_simulated_retina(bottom_canvas_native, float(right_grid_draw_center_x), float(grid_draw_center_y), grid_rows, grid_cols, hex_radius, right_retina_values)
 
-        # Ensure centers are floats for precision
-        left_grid_draw_center_x = float(left_grid_draw_center_x)
-        right_grid_draw_center_x = float(right_grid_draw_center_x)
-        grid_draw_center_y = float(grid_draw_center_y)
-
-        # Draw the grids
-        draw_simulated_retina(bottom_canvas, left_grid_draw_center_x, grid_draw_center_y, grid_rows, grid_cols, hex_radius, left_retina_values)
-        draw_simulated_retina(bottom_canvas, right_grid_draw_center_x, grid_draw_center_y, grid_rows, grid_cols, hex_radius, right_retina_values)
-
-        # Center labels
+        # Add labels to the native bottom canvas
         left_text = "Left Retina (Sim)"
         right_text = "Right Retina (Sim)"
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -599,105 +596,113 @@ def create_visualizations(stitched_pov, left_retina_values, right_retina_values,
         text_color = (200, 200, 200)
         text_y_pos = bottom_padding # Place text baseline at the top padding line
 
-        # Calculate text sizes
         (left_text_width, left_text_height), _ = cv2.getTextSize(left_text, font, font_scale, font_thickness)
         (right_text_width, right_text_height), _ = cv2.getTextSize(right_text, font, font_scale, font_thickness)
 
-        # Calculate centered X positions for text
         left_text_x = int(round(left_grid_draw_center_x - left_text_width / 2.0))
         right_text_x = int(round(right_grid_draw_center_x - right_text_width / 2.0))
 
-        # Ensure text starts within canvas bounds
         left_text_x = max(0, left_text_x)
         right_text_x = max(0, right_text_x)
         text_y_pos = max(left_text_height + 5, text_y_pos) # Ensure Y is below top edge
 
-        # Draw centered text
-        cv2.putText(bottom_canvas, left_text, (left_text_x, text_y_pos), font, font_scale, text_color, font_thickness, cv2.LINE_AA)
-        cv2.putText(bottom_canvas, right_text, (right_text_x, text_y_pos), font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+        cv2.putText(bottom_canvas_native, left_text, (left_text_x, text_y_pos), font, font_scale, text_color, font_thickness, cv2.LINE_AA)
+        cv2.putText(bottom_canvas_native, right_text, (right_text_x, text_y_pos), font, font_scale, text_color, font_thickness, cv2.LINE_AA)
 
     else:
-        # If hex vis disabled, create a small placeholder bar at the bottom
-        bottom_height = 20
-        bottom_width = w_stitched # Match top view width
-        bottom_canvas = np.zeros((bottom_height, bottom_width, 3), dtype=np.uint8)
-        cv2.putText(bottom_canvas, "Retina Viz Disabled", (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
+        # If hex vis disabled, create a small placeholder bar
+        h_bottom_native = 20
+        w_bottom_native = w_top_native # Match top view width initially
+        bottom_canvas_native = np.zeros((h_bottom_native, w_bottom_native, 3), dtype=np.uint8)
+        cv2.putText(bottom_canvas_native, "Retina Viz Disabled", (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
 
-    # Stitch top and bottom
-    # Resize top view (stitched POV) to match the final width of the bottom canvas if needed
-    # Use INTER_NEAREST for pixelated look, avoid blur on upscale/downscale
-    if bottom_width != w_stitched:
-        logger.debug(f"Resizing top view from {w_stitched} to {bottom_width} width.")
-        # Calculate new height maintaining aspect ratio
-        new_h_top = int(round(h_stitched * bottom_width / w_stitched)) if w_stitched > 0 else h_stitched
-        new_h_top = max(1, new_h_top) # Ensure height is at least 1
+    # Determine the common width for resizing both top and bottom canvases
+    canvas_w = max(w_top_native, w_bottom_native)
+    canvas_w = max(1, canvas_w) # Ensure width is at least 1
+
+    # Resize top view
+    top_view_resized = top_view # Default if no resize needed or fails
+    if w_top_native != canvas_w and w_top_native > 0:
         try:
-            # Ensure target width is also positive
-            target_w_top = max(1, bottom_width)
-            top_view_resized = cv2.resize(top_view, (target_w_top, new_h_top), interpolation=cv2.INTER_NEAREST)
+            # Calculate new height maintaining aspect ratio
+            aspect_ratio_top = h_top_native / w_top_native
+            canvas_h_top = int(round(canvas_w * aspect_ratio_top))
+            canvas_h_top = max(1, canvas_h_top) # Ensure height is at least 1
+            logger.debug(f"Resizing top view from {w_top_native}x{h_top_native} to {canvas_w}x{canvas_h_top}")
+            top_view_resized = cv2.resize(top_view, (canvas_w, canvas_h_top), interpolation=cv2.INTER_NEAREST)
         except cv2.error as e:
             logger.error(f"Error resizing top view: {e}. Using original.")
-            top_view_resized = top_view # Fallback
-            # If fallback, sizes won't match - resize bottom canvas *back* to match top
-            bottom_width = top_view_resized.shape[1]
-            try:
-                 bottom_canvas = cv2.resize(bottom_canvas, (bottom_width, bottom_height), interpolation=cv2.INTER_NEAREST)
-                 logger.warning(f"Adjusted bottom canvas width back to {bottom_width} due to top view resize error.")
-            except cv2.error as e_bottom:
-                 logger.error(f"Error resizing bottom canvas during fallback: {e_bottom}. Visualization may be misaligned.")
-                 # If bottom resize fails too, we might have differently sized images to stack.
-                 # Safest fallback: create empty final canvas? Or use just top view?
-                 final_canvas = top_view_resized # Default to top view only if bottom resize fails
-                 logger.error("Using only top view for visualization due to resize errors.")
+        except Exception as e:
+             logger.error(f"Unexpected error resizing top view: {e}", exc_info=True)
+    elif w_top_native == 0 or h_top_native == 0:
+        logger.warning("Top view has zero dimension, cannot resize.")
 
-
-    else:
-        top_view_resized = top_view # No resize needed
-
-    # Check if final_canvas was already assigned due to error
-    if 'final_canvas' not in locals():
-        h_top_resized, w_top_resized, _ = top_view_resized.shape
-        h_bottom, w_bottom, _ = bottom_canvas.shape
-
-        # Ensure widths match before stacking, padding if necessary
-        if w_top_resized != w_bottom:
-            logger.warning(f"Width mismatch before vstack: top={w_top_resized}, bottom={w_bottom}. Adjusting bottom.")
-            # Resize bottom to match top as a final attempt
-            try:
-                 bottom_canvas = cv2.resize(bottom_canvas, (w_top_resized, h_bottom), interpolation=cv2.INTER_NEAREST)
-                 w_bottom = bottom_canvas.shape[1] # update width
-            except cv2.error as e_final_resize:
-                 logger.error(f"Final resize attempt for bottom canvas failed: {e_final_resize}. Stacking may fail.")
-                 # If resizing fails, cannot stack. Use top view only.
-                 final_canvas = top_view_resized
-                 logger.error("Using only top view for visualization due to final resize error.")
-
-
-        # Create the final canvas by stacking vertically if widths match (and not already assigned)
-        if 'final_canvas' not in locals() and w_top_resized == w_bottom:
-             final_canvas = np.vstack((top_view_resized, bottom_canvas))
-        elif 'final_canvas' not in locals():
-             # Should not happen if resize fallback worked, but as safety:
-             logger.error("Cannot vstack images of different widths. Returning only top view.")
-             final_canvas = top_view_resized
-
-
-    # Scale final output for easier display
-    final_canvas_scaled = None
-    final_h, final_w = final_canvas.shape[:2] # Get dimensions from the actual final canvas
-
-    if final_w > 0 and final_h > 0 and scale_factor != 1.0 and scale_factor > 0:
-        target_w = int(round(final_w * scale_factor))
-        target_h = int(round(final_h * scale_factor))
-        target_w = max(1, target_w) # Ensure target dimensions are positive
-        target_h = max(1, target_h)
+    # Resize bottom view
+    bottom_canvas_resized = bottom_canvas_native # Default if no resize needed or fails
+    if bottom_canvas_native is not None and w_bottom_native != canvas_w and w_bottom_native > 0:
         try:
-            final_canvas_scaled = cv2.resize(final_canvas, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+            # Calculate new height maintaining aspect ratio
+            aspect_ratio_bottom = h_bottom_native / w_bottom_native
+            canvas_h_bottom = int(round(canvas_w * aspect_ratio_bottom))
+            canvas_h_bottom = max(1, canvas_h_bottom) # Ensure height is at least 1
+            logger.debug(f"Resizing bottom canvas from {w_bottom_native}x{h_bottom_native} to {canvas_w}x{canvas_h_bottom}")
+            bottom_canvas_resized = cv2.resize(bottom_canvas_native, (canvas_w, canvas_h_bottom), interpolation=cv2.INTER_NEAREST)
         except cv2.error as e:
-            logger.error(f"Error scaling final canvas: {e}. Returning unscaled.")
-            final_canvas_scaled = final_canvas # Fallback to unscaled
+            logger.error(f"Error resizing bottom canvas: {e}. Using original native.")
+        except Exception as e:
+             logger.error(f"Unexpected error resizing bottom canvas: {e}", exc_info=True)
+    elif bottom_canvas_native is None:
+         logger.warning("Bottom canvas is None, cannot resize.") # Should only happen if hex viz disabled and top view width was 0
+         # Create a minimal placeholder if needed for stacking
+         aspect_ratio_bottom = 0.1 # Arbitrary aspect ratio for placeholder
+         canvas_h_bottom = int(round(canvas_w * aspect_ratio_bottom))
+         canvas_h_bottom = max(1, canvas_h_bottom)
+         bottom_canvas_resized = np.zeros((canvas_h_bottom, canvas_w, 3), dtype=np.uint8)
+         logger.debug(f"Created placeholder bottom canvas {canvas_w}x{canvas_h_bottom}")
+
+    elif w_bottom_native == 0 or h_bottom_native == 0:
+        logger.warning("Bottom canvas has zero dimension, cannot resize.")
+
+
+    # Stack the (potentially resized) views vertically
+    final_canvas = None
+    try:
+        # Final check on dimensions before stacking
+        h_top_res, w_top_res, _ = top_view_resized.shape
+        h_bottom_res, w_bottom_res, _ = bottom_canvas_resized.shape
+
+        if w_top_res == w_bottom_res and w_top_res > 0:
+            final_canvas = np.vstack((top_view_resized, bottom_canvas_resized))
+            logger.debug(f"Stacked views successfully. Final internal shape: {final_canvas.shape}")
+        else:
+            logger.error(f"Width mismatch before final stack: top={w_top_res}, bottom={w_bottom_res}. Cannot stack.")
+            # Fallback: use only the top view if stacking fails
+            final_canvas = top_view_resized
+    except Exception as e:
+        logger.error(f"Error during vertical stacking: {e}", exc_info=True)
+        # Fallback: use only the top view if stacking fails
+        final_canvas = top_view_resized if top_view_resized is not None and top_view_resized.size > 0 else np.zeros((10,10,3), dtype=np.uint8) # Last resort placeholder
+
+
+    # Apply final display scaling
+    final_canvas_scaled = final_canvas # Default to unscaled if scaling fails or not needed
+    if final_canvas is not None and final_canvas.shape[0] > 0 and final_canvas.shape[1] > 0:
+        final_h, final_w = final_canvas.shape[:2]
+        if scale_factor != 1.0 and scale_factor > 0:
+            target_w = int(round(final_w * scale_factor))
+            target_h = int(round(final_h * scale_factor))
+            target_w = max(1, target_w) # Ensure target dimensions are positive
+            target_h = max(1, target_h)
+            try:
+                logger.debug(f"Applying final scale factor {scale_factor}. Target size: {target_w}x{target_h}")
+                final_canvas_scaled = cv2.resize(final_canvas, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+            except cv2.error as e:
+                logger.error(f"Error scaling final canvas: {e}. Returning unscaled.")
+            except Exception as e:
+                logger.error(f"Unexpected error scaling final canvas: {e}", exc_info=True)
     else:
-        final_canvas_scaled = final_canvas # No scaling needed or invalid scale factor
+         logger.error("Final canvas before scaling is invalid. Cannot apply scale factor.")
+
 
     return final_canvas_scaled
 
@@ -838,18 +843,18 @@ if __name__ == "__main__":
                      logger.info(f"Episode ended during FOV simulation/reset at step {step_counter+1}. Attempting final viz.")
                      final_visualization_attempted = True # Prevent multiple attempts if already done
                      if stitched_pov is not None:
-                          try:
-                              left_b, right_b = simulate_nmf_retina_output(stitched_pov, HEX_GRID_ROWS, HEX_GRID_COLS, NMF_BINOCULAR_OVERLAP_DEG, TARGET_FOV)
-                              display_img = create_visualizations(stitched_pov, left_b, right_b, DISPLAY_SCALE_FACTOR, hex_config)
-                              if display_img is not None and display_img.shape[0] > 0 and display_img.shape[1] > 0:
-                                  display_img_bgr = cv2.cvtColor(display_img, cv2.COLOR_RGB2BGR)
-                                  cv2.imshow("NMF Agent View (Minecraft)", display_img_bgr)
-                                  if SAVE_VIDEO and video_writer is not None and video_writer.isOpened():
-                                      logger.debug("Writing final frame to video after episode end.")
-                                      video_writer.write(display_img_bgr)
-                                  cv2.waitKey(50) # Short delay
-                          except Exception as viz_err:
-                              logger.error(f"Error during final visualization after episode end: {viz_err}")
+                         try:
+                             left_b, right_b = simulate_nmf_retina_output(stitched_pov, HEX_GRID_ROWS, HEX_GRID_COLS, NMF_BINOCULAR_OVERLAP_DEG, TARGET_FOV)
+                             display_img = create_visualizations(stitched_pov, left_b, right_b, DISPLAY_SCALE_FACTOR, hex_config)
+                             if display_img is not None and display_img.shape[0] > 0 and display_img.shape[1] > 0:
+                                 display_img_bgr = cv2.cvtColor(display_img, cv2.COLOR_RGB2BGR)
+                                 cv2.imshow("NMF Agent View (Minecraft)", display_img_bgr)
+                                 if SAVE_VIDEO and video_writer is not None and video_writer.isOpened():
+                                     logger.debug("Writing final frame to video after episode end.")
+                                     video_writer.write(display_img_bgr)
+                                 cv2.waitKey(50) # Short delay
+                         except Exception as viz_err:
+                             logger.error(f"Error during final visualization after episode end: {viz_err}")
                      pbar.update(1) # Update progress bar for this step
                      continue # Skip rest of loop, will break on next iteration's 'if done'
 

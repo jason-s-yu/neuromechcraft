@@ -56,7 +56,7 @@ NMF_BINOCULAR_OVERLAP_DEG = 17.0
 
 # Visualization config
 DISPLAY_SCALE_FACTOR = 4 # Upscale the final output window
-ENABLE_HEX_VISUALIZATION = True # Set to False to disable retina viz
+ENABLE_HEX_VISUALIZATION = True # Set to False to disable retina vis
 HEX_GRID_RADIUS = 2 # Controls size of hexagons in visualization (Reduced for higher density)
 HEX_GRID_COLS = 26 # Approximate number of columns for simulated retina hex grid (Increased towards biological count)
 HEX_GRID_ROWS = 26 # Approximate number of rows (Increased towards biological count) -> 26x26 = 676 ommatidia
@@ -614,7 +614,7 @@ def create_visualizations(stitched_pov, left_retina_values, right_retina_values,
         h_bottom_native = 20
         w_bottom_native = w_top_native # Match top view width initially
         bottom_canvas_native = np.zeros((h_bottom_native, w_bottom_native, 3), dtype=np.uint8)
-        cv2.putText(bottom_canvas_native, "Retina Viz Disabled", (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
+        cv2.putText(bottom_canvas_native, "Retina Visualization Disabled", (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
 
     # Determine the common width for resizing both top and bottom canvases
     canvas_w = max(w_top_native, w_bottom_native)
@@ -652,7 +652,7 @@ def create_visualizations(stitched_pov, left_retina_values, right_retina_values,
         except Exception as e:
              logger.error(f"Unexpected error resizing bottom canvas: {e}", exc_info=True)
     elif bottom_canvas_native is None:
-         logger.warning("Bottom canvas is None, cannot resize.") # Should only happen if hex viz disabled and top view width was 0
+         logger.warning("Bottom canvas is None, cannot resize.") # Should only happen if hex vis disabled and top view width was 0
          # Create a minimal placeholder if needed for stacking
          aspect_ratio_bottom = 0.1 # Arbitrary aspect ratio for placeholder
          canvas_h_bottom = int(round(canvas_w * aspect_ratio_bottom))
@@ -777,10 +777,6 @@ if __name__ == "__main__":
     done = False
     max_steps = 1000 # Limit the number of agent steps
 
-    # Set logger level for main execution (DEBUG for details, INFO for cleaner output)
-    # logger.setLevel(logging.INFO)
-    logger.setLevel(logging.DEBUG)
-
     try:
         logger.info("Creating MineRL environment (MineRLNavigateDense-v0)...")
         # Note: MineRLNavigateDense requires compass use. For pure visual navigation,
@@ -840,7 +836,7 @@ if __name__ == "__main__":
                 # Attempt final visualization even if episode ended during FOV sim
                 final_visualization_attempted = False
                 if done and not final_visualization_attempted:
-                     logger.info(f"Episode ended during FOV simulation/reset at step {step_counter+1}. Attempting final viz.")
+                     logger.info(f"Episode ended during FOV simulation/reset at step {step_counter+1}. Attempting final vis.")
                      final_visualization_attempted = True # Prevent multiple attempts if already done
                      if stitched_pov is not None:
                          try:
@@ -853,8 +849,8 @@ if __name__ == "__main__":
                                      logger.debug("Writing final frame to video after episode end.")
                                      video_writer.write(display_img_bgr)
                                  cv2.waitKey(50) # Short delay
-                         except Exception as viz_err:
-                             logger.error(f"Error during final visualization after episode end: {viz_err}")
+                         except Exception as vis_err:
+                             logger.error(f"Error during final visualization after episode end: {vis_err}")
                      pbar.update(1) # Update progress bar for this step
                      continue # Skip rest of loop, will break on next iteration's 'if done'
 

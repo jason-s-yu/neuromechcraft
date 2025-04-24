@@ -56,7 +56,7 @@ NMF_BINOCULAR_OVERLAP_DEG = 17.0
 
 # Visualization config
 DISPLAY_SCALE_FACTOR = 4 # Upscale the final output window
-ENABLE_HEX_VISUALIZATION = True # Set to False to disable retina viz
+ENABLE_HEX_VISUALIZATION = True # Set to False to disable retina vis
 HEX_GRID_RADIUS = 3 # Controls size of hexagons in visualization
 HEX_GRID_COLS = 12 # Approximate number of columns for simulated retina hex grid
 HEX_GRID_ROWS = 10 # Approximate number of rows
@@ -621,7 +621,7 @@ def create_visualizations(stitched_pov, left_retina_values, right_retina_values,
         bottom_height = 20
         bottom_width = w_stitched # Match top view width
         bottom_canvas = np.zeros((bottom_height, bottom_width, 3), dtype=np.uint8)
-        cv2.putText(bottom_canvas, "Retina Viz Disabled", (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
+        cv2.putText(bottom_canvas, "Retina Visualization Disabled", (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
 
     # Stitch top and bottom
     # Resize top view (stitched POV) to match the final width of the bottom canvas if needed
@@ -772,10 +772,6 @@ if __name__ == "__main__":
     done = False
     max_steps = 1000 # Limit the number of agent steps
 
-    # Set logger level for main execution (DEBUG for details, INFO for cleaner output)
-    # logger.setLevel(logging.INFO)
-    logger.setLevel(logging.DEBUG)
-
     try:
         logger.info("Creating MineRL environment (MineRLNavigateDense-v0)...")
         # Note: MineRLNavigateDense requires compass use. For pure visual navigation,
@@ -835,7 +831,7 @@ if __name__ == "__main__":
                 # Attempt final visualization even if episode ended during FOV sim
                 final_visualization_attempted = False
                 if done and not final_visualization_attempted:
-                     logger.info(f"Episode ended during FOV simulation/reset at step {step_counter+1}. Attempting final viz.")
+                     logger.info(f"Episode ended during FOV simulation/reset at step {step_counter+1}. Attempting final vis.")
                      final_visualization_attempted = True # Prevent multiple attempts if already done
                      if stitched_pov is not None:
                           try:
@@ -848,8 +844,8 @@ if __name__ == "__main__":
                                       logger.debug("Writing final frame to video after episode end.")
                                       video_writer.write(display_img_bgr)
                                   cv2.waitKey(50) # Short delay
-                          except Exception as viz_err:
-                              logger.error(f"Error during final visualization after episode end: {viz_err}")
+                          except Exception as vis_err:
+                              logger.error(f"Error during final visualization after episode end: {vis_err}")
                      pbar.update(1) # Update progress bar for this step
                      continue # Skip rest of loop, will break on next iteration's 'if done'
 
